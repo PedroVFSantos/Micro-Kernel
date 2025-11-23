@@ -1,5 +1,5 @@
 KERNEL=kernel.bin
-OBJ=boot.o kernel.o console.o scheduler.o ipc.o user_tasks.o
+OBJ=boot.o kernel.o 
 CXX = g++
 AS = gcc
 LD = ld

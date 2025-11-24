@@ -15,25 +15,42 @@ Diferente de kernels monolíticos, este projeto segue a filosofia **Minix**: o K
 
 ```mermaid
 graph TD
-    subgraph User Space [Ring 3 - User Space]
-        style User Space fill:#f9f9f9,stroke:#333,stroke-width:2px
-        VD[📺 Video Driver]
-        KBD[⌨️ Keyboard Driver]
-        FS[📂 File System]
-        SHELL[>_ Shell/User Apps]
+    %% Definição de Classes de Estilo (Cores profissionais)
+    classDef userLayer fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#0D47A1
+    classDef ipcLayer fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,stroke-dasharray: 5 5,color:#E65100
+    classDef kernelLayer fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#B71C1c
+
+    %% Camada de Usuário
+    subgraph Ring3 [Ring 3 - User Space]
+        direction LR
+        VD[Video Driver]:::userLayer
+        KBD[Input Driver]:::userLayer
+        FS[File System]:::userLayer
+        APP[User Applications]:::userLayer
     end
 
-    subgraph IPC Layer [IPC Bus]
-        style IPC Layer fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,stroke-dasharray: 5 5
-        MSG(Message Passing System)
+    %% Camada de IPC (O Barramento)
+    subgraph Bus [Inter-Process Communication]
+        IPC{{Message Passing System}}:::ipcLayer
     end
 
-    subgraph Kernel Space [Ring 0 - Microkernel]
-        style Kernel Space fill:#ffebee,stroke:#c62828,stroke-width:2px
-        SCHED[⏱️ Scheduler]
-        MEM[💾 Memory Manager]
-        INT[⚡ Interrupt Handling]
+    %% Camada de Kernel
+    subgraph Ring0 [Ring 0 - Microkernel]
+        direction LR
+        SCHED[Scheduler]:::kernelLayer
+        MM[Memory Manager]:::kernelLayer
+        ISR[Interrupt Handler]:::kernelLayer
     end
+
+    %% Conexões
+    VD <--> IPC
+    KBD <--> IPC
+    FS <--> IPC
+    APP <--> IPC
+
+    IPC <--> SCHED
+    IPC <--> MM
+    IPC <--> ISR
 
     %% Conexões
     VD <--> MSG

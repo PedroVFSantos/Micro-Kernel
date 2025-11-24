@@ -11,7 +11,8 @@
 
 ## Architecture
 
-Unlike monolithic kernels, this project follows the **Minix** philosophy: the Kernel does the bare minimum. Video drivers, file systems, and network stacks run as isolated user processes.
+Unlike monolithic kernels, this project follows the **Minix** philosophy:  
+the Kernel does the bare minimum. Video drivers, file systems, and network stacks run as isolated user processes.
 
 ```mermaid
 graph TD
@@ -51,5 +52,3 @@ graph TD
     IPC <--> SCHED
     IPC <--> MM
     IPC <--> ISR
-
-

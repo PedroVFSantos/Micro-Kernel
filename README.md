@@ -1,94 +1,113 @@
-# MancoOS - Educational Microkernel
+# MancoOS
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-![Platform](https://img.shields.io/badge/platform-i386-blue)
-![Language](https://img.shields.io/badge/language-C%2B%2B17-orange)
-![License](https://img.shields.io/badge/license-MIT-lightgrey)
+A small x86 (32-bit) kernel I wrote to learn how the pieces of an OS fit together: boot, segmentation, interrupts, physical memory, context switching and message passing. It's written in C++17 with a bit of assembly, boots via Multiboot (GRUB or QEMU's `-kernel`), and runs a Shortest Job First scheduler over a handful of demo tasks.
 
-**MancoOS** is a microkernel-based operating system designed for educational purposes. Built from scratch using **C++17** and **x86 Assembly**, it emphasizes modularity, memory isolation, and a robust inter-process communication (IPC) system.
+The long-term idea is a Minix-style microkernel, where drivers live outside the kernel and talk over IPC. **It isn't there yet**: everything still runs in ring 0 and shares one address space. The IPC and the "console server" are already shaped like that, so moving them to ring 3 is the next step (see [What's missing](#whats-missing)).
 
----
+<p>
+  <img src="docs/boot.png" width="49%" alt="Boot sequence and scheduler starting">
+  <img src="docs/sjf-run.png" width="49%" alt="SJF finishing and printing stats">
+</p>
 
-## System Evidence
+## What it does
 
-| **IDT & Boot Sequence** | **SJF Scheduler Initialization** |
-|:------------------------:|:---------------------------------:|
-| ![IDT Load](image_ec6601.png) | ![Scheduler Start](image_ecd206.png) |
-| *Kernel successfully loading the Interrupt Descriptor Table.* | *The SJF algorithm starting to manage system tasks.* |
+On boot the kernel:
 
----
+1. Sets up a flat GDT (code + data segments, 0 to 4GB).
+2. Loads an IDT with stubs for the 32 CPU exceptions and the 16 PIC IRQs, remaps the PIC to vectors 32-47, and sets the PIT to 100 Hz. Any CPU exception prints its name, `eip` and error code, then halts.
+3. Reads the RAM size from the Multiboot info and starts a bitmap allocator for 4KB pages. Everything below the end of the kernel image is marked as used.
+4. Creates five tasks. Each one gets a stack page from the PMM.
+5. Runs the scheduler until there's nothing left to run, then prints a table with waiting and turnaround times.
 
-## Architecture
+### Scheduler
 
-Following the **Minix philosophy**, MancoOS keeps the Ring 0 (Kernel Space) as minimal as possible. Services such as video drivers and input handlers run in Ring 3 (User Space), communicating via a message-passing bus.
+It's **non-preemptive SJF**. Each task has an estimated burst (in timer ticks). The scheduler always picks the `READY` task with the smallest estimate, and that task keeps the CPU until it finishes, blocks on `receive`, or calls `yield`. The timer doesn't preempt anything; it's only there to measure time.
 
-```mermaid
-graph TD
-    classDef userLayer fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#0D47A1
-    classDef ipcLayer fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,stroke-dasharray: 5 5,color:#E65100
-    classDef kernelLayer fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#B71C1c
+The scheduler loop runs on `kernel_main`'s stack, like xv6's `scheduler()`. Switching is always task → scheduler → task through `switch_task` (`src/switch.s`), which saves only the callee-saved registers (`ebx`, `esi`, `edi`, `ebp`) and swaps `esp`. To start a new task, `add_task` builds a fake frame on its stack that looks like a `switch_task` call that never returned, so the first switch "returns" into `task_entry`.
 
-    subgraph Ring3 [Ring 3 - User Space]
-        direction LR
-        VD[VGA Service]:::userLayer
-        KBD[Input Service]:::userLayer
-        APP[Applications]:::userLayer
-    end
+The demo tasks arrive in the order `compiler (150)`, `backup (50)`, `indexer (100)`, `shell (20)`, and SJF runs them shortest first:
 
-    subgraph Bus [Inter-Process Communication]
-        IPC{{Message Passing System}}:::ipcLayer
-    end
+```
+[sched] start console-srv  burst=1 tick=1
+[sched] start shell        burst=20 tick=1
+  [shell] working...
+  [shell] finished
+[sched] done  shell        tick=21
+[sched] start backup       burst=50 tick=21
+...
+task         burst   wait  turnaround
+console-srv    (blocked, waiting for messages)
+compiler       150    170         320
+backup          50     20          70
+indexer        100     70         170
+shell           20      0          20
 
-    subgraph Ring0 [Ring 0 - Microkernel]
-        direction LR
-        SCHED[SJF Scheduler]:::kernelLayer
-        MM[Memory Manager]:::kernelLayer
-        ISR[Interrupt Handler]:::kernelLayer
-    end
-
-    VD <--> IPC
-    KBD <--> IPC
-    APP <--> IPC
-
-    IPC <--> SCHED
-    IPC <--> MM
-    IPC <--> ISR
+avg wait (SJF, measured):     65.0 ticks
+avg wait (FCFS, same bursts): 162.5 ticks
 ```
 
----
+The FCFS line is computed from the same bursts in arrival order, just for comparison.
 
-## Key Technical Features
+### IPC
 
-- **SJF Scheduler**: Implements the Shortest Job First algorithm to minimize average waiting time, featuring assembly-level context switching.
-- **Physical Memory Manager (PMM)**: A high-performance memory allocator using a Bitmap structure to manage 4KB pages.
-- **Custom Visual Identity**: A unique VGA color palette based on Rich Mahogany and Coffee Bean codes.
-- **Robust Exception Handling**: Custom ISRs and IDT configuration to ensure system stability and prevent triple faults.
-- **Containerized Build System**: A fully automated Docker pipeline for cross-compiling i386-elf binaries.
+Each task has a mailbox of 8 messages (`src/ipc.cpp`). `send` puts a message in the destination's mailbox and wakes it if it was blocked. `receive` takes the first message that matches (from a given sender or `IPC::ANY`), or blocks the task until one arrives.
 
----
+`send` is also a scheduling point: after sending, the sender yields. So if the receiver has a shorter burst, it runs right away. That's why the workers' lines show up in order even though only `console-srv` writes to the screen.
 
-## How to Run
+## Building and running
 
-### 1. Build the ISO (Docker)
+You need `g++` with 32-bit support (`gcc-multilib`/`lib32-gcc-libs`), `nasm`, `ld` and `qemu-system-i386`. The ISO also needs `grub-mkrescue` and `xorriso`.
 
-Ensure you have Docker installed and run the following command to generate the bootable image:
-
-```powershell
-docker run --rm -v ${PWD}:/root/env microkernel-builder make iso
+```sh
+make run        # builds kernel.bin and boots it with qemu -kernel
+make run-iso    # same thing through GRUB
 ```
 
-### 2. Execute via QEMU
+Kernel output also goes to COM1, so with `make run` it shows up in the terminal as well.
 
-You can run the OS locally or through a browser-based VNC container:
+If you don't want to install the toolchain, there's a Dockerfile:
 
-```powershell
-docker run -it --rm -p 8006:8006 -v ${PWD}:/storage -e BOOT="file:///storage/microkernel.iso" -e KVM=N qemux/qemu
+```sh
+./build_docker.sh                          # builds the image (first run) and microkernel.iso
+qemu-system-i386 -cdrom microkernel.iso
 ```
 
-Access the system at `http://localhost:8006`.
+Without QEMU installed (or without a spare screen), the `qemux/qemu` container shows the VM in the browser at `http://localhost:8006`. It attaches the ISO as a USB drive, which SeaBIOS skips, so the kernel is passed straight to QEMU with `-kernel`:
 
----
+```sh
+docker run -it --rm -p 8006:8006 \
+    -v "$PWD/microkernel.iso":/boot.iso -v "$PWD/kernel.bin":/kernel.bin \
+    -e KVM=N -e ARGUMENTS="-kernel /kernel.bin" qemux/qemu
+```
 
-## Author
+(On PowerShell, swap `$PWD` for `${PWD}` and the `\` for a backtick.)
 
-Developed by **PedroVFSantos** - Computer Science Student at UFSCar.
+## Layout
+
+```
+src/boot.s          multiboot header, stack, jump to kernel_main
+src/kernel.cpp      init order and panic()
+src/gdt.cpp         GDT (+ gdt_flush.s)
+src/idt.cpp         IDT
+src/interrupts.s    lidt, ISR/IRQ stubs, common handler
+src/isr.cpp         exception handler, PIC, PIT
+src/pmm.cpp         bitmap page allocator
+src/scheduler.cpp   SJF, tasks, stats
+src/switch.s        context switch
+src/ipc.cpp         mailboxes, send/receive
+src/user_task.cpp   demo tasks (console server + workers)
+src/console.cpp     VGA text mode, serial, custom palette
+src/string.cpp      memset/memcpy/memmove (GCC may emit calls to them)
+```
+
+## What's missing
+
+- **User mode.** No TSS, no ring 3 segments, no syscalls. The tasks are kernel threads.
+- **Paging.** The PMM hands out physical pages, but there's no virtual memory yet, so there's no isolation between tasks.
+- **Preemption.** Being non-preemptive is on purpose, since it's the classic SJF, but a task stuck in a loop freezes the system. A preemptive variant (SRTF) would use IRQ0 to switch.
+- **Real burst estimates.** Right now the burst is passed in by hand. Textbook SJF estimates it with exponential averaging of past bursts.
+- Keyboard driver, filesystem, and using the `SYS_READ_KBD`/`FS_OPEN` message types that already exist in `ipc.hpp`.
+
+## License
+
+MIT. Pedro V. F. Santos, Computer Science student at UFSCar.

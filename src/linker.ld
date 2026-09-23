@@ -1,7 +1,5 @@
 ENTRY(start)
 
-/* Defini os mapas, tenho que conferir depois */
-
 SECTIONS
 {
 	. = 1M;
@@ -9,22 +7,33 @@ SECTIONS
 	.text :
 	{
 		KEEP(*(.multiboot))
-		*(.text)
+		*(.text .text.*)
 	}
 
 	.rodata :
 	{
-		*(.rodata)
+		*(.rodata .rodata.*)
 	}
 
 	.data :
 	{
-		*(.data)
+		*(.data .data.*)
 	}
 
 	.bss :
 	{
-		*(.COMMON)
-		*(.bss)
+		*(COMMON)
+		*(.bss .bss.*)
+	}
+
+	/* PMM usa isso pra saber até onde o kernel ocupa memória */
+	. = ALIGN(4K);
+	_kernel_end = .;
+
+	/DISCARD/ :
+	{
+		*(.comment)
+		*(.eh_frame)
+		*(.note .note.*)
 	}
 }

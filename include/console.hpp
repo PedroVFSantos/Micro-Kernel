@@ -16,11 +16,20 @@ namespace Manco {
         void clear(Color bg = Color::Black);
         void put_char(char c, Color fg = Color::White, Color bg = Color::Black);
         void print(const char* str, Color fg = Color::White, Color bg = Color::Black);
+        // width > 0 alinha à direita com espaços
+        void print_dec(uint32_t value, int width = 0, Color fg = Color::White);
+        void print_hex(uint32_t value, Color fg = Color::White);
     private:
         int column = 0;
         int row = 0;
-        uint16_t* const buffer = (uint16_t*)0xB8000;
+        static constexpr uintptr_t VGA_MEMORY = 0xB8000;
+        uint16_t* buffer() const { return reinterpret_cast<uint16_t*>(VGA_MEMORY); }
+        void scroll();
     };
 
+    // Tudo que vai pra tela também sai na COM1 (dá pra ver com qemu -serial stdio)
+    void init_serial();
     void set_vga_palette(); 
+
+    extern Console console;
 }

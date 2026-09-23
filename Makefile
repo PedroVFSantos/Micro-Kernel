@@ -1,49 +1,60 @@
-KERNEL=kernel.bin
-# Lista completa de objetos necessários para o Linker
-OBJ=boot.o kernel.o console.o gdt.o gdt_flush.o idt.o interrupts.o pmm.o scheduler.o ipc.o switch.o user_tasks.o
+KERNEL = kernel.bin
+ISO = microkernel.iso
+BUILD = build
 
 CXX = g++
 NASM = nasm
 AS = gcc
 LD = ld
 
-# Flags para ambiente freestanding 32-bit e sem inicialização segura de statics
-CXXFLAGS = -m32 -std=gnu++17 -ffreestanding -fno-exceptions -fno-rtti -fno-threadsafe-statics -O2 -Iinclude
+CPP_SRC = $(wildcard src/*.cpp)
+OBJ = $(BUILD)/boot.o $(BUILD)/gdt_flush.o $(BUILD)/interrupts.o $(BUILD)/switch.o \
+      $(patsubst src/%.cpp,$(BUILD)/%.o,$(CPP_SRC))
+
+# freestanding 32-bit: sem libc, sem exceções/RTTI, sem statics thread-safe.
+# -mgeneral-regs-only porque o kernel não habilita SSE/FPU e o GCC gosta de vetorizar loops.
+# -fno-pie/-fno-stack-protector porque algumas distros ligam isso por padrão.
+CXXFLAGS = -m32 -std=gnu++17 -ffreestanding -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+           -fno-pie -fno-stack-protector -mgeneral-regs-only -fno-asynchronous-unwind-tables \
+           -O2 -Wall -Wextra -Iinclude -MMD -MP
 LDFLAGS = -m elf_i386 -T src/linker.ld -nostdlib
 
-all: $(KERNEL) iso
+QEMU = qemu-system-i386
+QEMU_FLAGS = -m 128M -serial stdio
 
-# Objetos em Assembly (GAS)
-boot.o: src/boot.s
-	$(AS) -m32 -c src/boot.s -o boot.o
+all: $(KERNEL)
 
-# Objetos em Assembly (NASM)
-gdt_flush.o: src/gdt_flush.s
-	$(NASM) -f elf32 src/gdt_flush.s -o gdt_flush.o
+$(BUILD):
+	mkdir -p $(BUILD)
 
-interrupts.o: src/interrupts.s
-	$(NASM) -f elf32 src/interrupts.s -o interrupts.o
+$(BUILD)/boot.o: src/boot.s | $(BUILD)
+	$(AS) -m32 -c $< -o $@
 
-switch.o: src/switch.s
-	$(NASM) -f elf32 src/switch.s -o switch.o
+$(BUILD)/%.o: src/%.s | $(BUILD)
+	$(NASM) -f elf32 $< -o $@
 
-# Regra genérica para todos os arquivos .cpp em src/
-%.o: src/%.cpp
+$(BUILD)/%.o: src/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Linkagem final [cite: 4]
-$(KERNEL): $(OBJ)
-	$(LD) $(LDFLAGS) -o $(KERNEL) $(OBJ)
+$(KERNEL): $(OBJ) src/linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJ)
 
-# Geração da ISO bootável 
 iso: $(KERNEL)
 	mkdir -p iso/boot/grub
 	cp $(KERNEL) iso/boot/kernel.bin
 	cp grub.cfg iso/boot/grub/grub.cfg
-	grub-mkrescue -o microkernel.iso iso
+	grub-mkrescue -o $(ISO) iso
+
+# Boot direto pelo loader multiboot do QEMU, não precisa de GRUB
+run: $(KERNEL)
+	$(QEMU) $(QEMU_FLAGS) -kernel $(KERNEL)
+
+run-iso: iso
+	$(QEMU) $(QEMU_FLAGS) -cdrom $(ISO)
 
 clean:
-	rm -f *.o $(KERNEL) microkernel.iso
-	rm -rf iso
+	rm -rf $(BUILD) $(KERNEL) $(ISO) iso
 
-.PHONY: all iso clean
+-include $(OBJ:.o=.d)
+
+.PHONY: all iso run run-iso clean

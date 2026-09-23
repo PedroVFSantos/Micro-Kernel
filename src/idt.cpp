@@ -1,8 +1,7 @@
 #include "idt.hpp"
 
-extern "C" void dummy_handler() {
-    __asm__ volatile("iret");
-}
+// Gerado em interrupts.s: endereços dos stubs dos vetores 0-47
+extern "C" uint32_t isr_stub_table[48];
 
 namespace Manco {
     IDTEntry idt[256];
@@ -22,8 +21,10 @@ namespace Manco {
         idt_ptr.limit = (sizeof(IDTEntry) * 256) - 1;
         idt_ptr.base = (uint32_t)(uintptr_t)&idt;
 
-        for(int i = 0; i < 256; i++) {
-            set_idt_gate(i, (uint32_t)dummy_handler, 0x08, 0x8E);
+        // 0-31 exceções da CPU, 32-47 IRQs do PIC. O resto fica com present=0,
+        // então se algo disparar lá a CPU gera #GP e cai no handler de exceção.
+        for (int i = 0; i < 48; i++) {
+            set_idt_gate(i, isr_stub_table[i], 0x08, 0x8E);
         }
 
         load_idt((uint32_t)(uintptr_t)&idt_ptr);

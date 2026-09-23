@@ -1,6 +1,6 @@
 .set ALIGN,    1<<0             
 .set MEMINFO,  1<<1             
-.set FLAGS,    ALIGN 
+.set FLAGS,    ALIGN | MEMINFO
 .set MAGIC,    0x1BADB002       
 .set CHECKSUM, -(MAGIC + FLAGS) 
 
@@ -23,6 +23,9 @@ stack_top:
 start:
 	mov $stack_top, %esp
 
+	# GRUB deixa o magic em eax e o ponteiro pro multiboot_info em ebx
+	push %ebx
+	push %eax
 	call kernel_main
 
 	cli
